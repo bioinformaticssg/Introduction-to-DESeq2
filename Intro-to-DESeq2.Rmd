@@ -531,3 +531,13 @@ heatmap.2(heatmap_vsd,
 ```{r echo = TRUE, fig.align = "center"}
 plotMA(res, ylim = c(-3, 3))
 ```
+
+## Plot Counts
+
+```{r echo = TRUE, fig.align = "center"}
+plotCounts(dds, gene = which.max(res$padj), intgroup = "cell_type")
+plotCounts(dds, gene = "ENSG00000100321.14", intgroup = "cell_type")
+
+
+```
+
