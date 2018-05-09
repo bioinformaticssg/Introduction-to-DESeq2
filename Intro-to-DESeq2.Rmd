@@ -1,0 +1,533 @@
+---
+title: "Introduction to DESeq2"
+author: "Stacey Borrego"
+date: "5/09/2018"
+output:
+  slidy_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r eval = TRUE}
+rm(list=ls())
+```
+
+## Exploratory Data Analysis and Differential Expression
+<br>
+**Exploratory Data Analysis (EDA)**
+
+Analyzing data sets to summarize their main characteristics, usually through
+visualization. Read more on [Wikipedia](https://en.wikipedia.org/wiki/Exploratory_data_analysis).
+<br>
+<br>
+
+**Differential Expression (DE)**
+
+Differential expression analysis is a statistical approach to identify changes 
+in gene expression between different experimental groups. 
+
+*Program Considerations*
+
+- Pair wise comparison 
+- Multiple comparison - edgeR, limma-voom, DESeq2, maSigPro
+- Bayesian - baySeq, EBSeq
+
+*Comparison Articles*
+
+- [Mike Love's Blog: DESeq2 or edgeR](https://mikelove.wordpress.com/2016/09/28/deseq2-or-edger/)
+- [How many biological replicates are needed in an RNA-seq experiment and which differential expression tool should you use?](http://rnajournal.cshlp.org/content/early/2016/03/30/rna.053959.115.full.pdf+html) 2016 Schurch et al.
+
+## DESeq2
+
+DESEq2 is a tool for differential gene analysis of count data. 
+<br>
+<br>
+
+*Helpful Resources*
+
+- [Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-014-0550-8)
+- [DESeq2 Manual](http://www.bioconductor.org/packages/release/bioc/manuals/DESeq2/man/DESeq2.pdf)
+- [Analyzing RNA-seq data with DESeq2, 4/30/18](http://www.bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html)
+- [RNA-seq workflow: gene-level exploratory analysis and differential expression - Timecourse tutorial included](http://master.bioconductor.org/packages/release/workflows/vignettes/rnaseqGene/inst/doc/rnaseqGene.html)
+- [Differential expression of RNA-Seq data at the gene level – the DESeq package](http://bioconductor.org/packages/release/bioc/vignettes/DESeq/inst/doc/DESeq.pdf)
+
+## SummarizedExperiment
+
+Bioconductor generally uses ExpressionSet and SummarizedExperiment as data containers.
+These are generally large data matrices with metadata surrounding them.
+
+```{r iris_image, out.width = "375px", fig.align = "center"}
+knitr::include_graphics("Figures/summarizedexperiment.png")
+```
+
+Figure 1. The component parts of a SummarizedExperiment object. The assay (pink block) contains the matrix of counts, the rowRanges (blue block) contains information about the genomic ranges and the colData (green block) contains information about the samples. The highlighted line in each block represents the first row (note that the first row of colData lines up with the first column of the assay).<br>
+<small>Love MI, Anders S, Kim V and Huber W. RNA-Seq workflow: gene-level exploratory analysis and differential expression [version 2]. F1000Research 2016, 4:1070 (doi: 10.12688/f1000research.7035.2)</small>
+
+
+- [STHDA: ExpressionSet and SummarizedExperiment](http://www.sthda.com/english/wiki/expressionset-and-summarizedexperiment)
+
+
+## Packages for today
+
+```{r echo = TRUE, eval = FALSE}
+
+source("https://bioconductor.org/biocLite.R")
+
+# Dataframe manipulation
+install.packages(c("dplyr", "tibble"))
+
+# Exploratory Data Analysis tools
+biocLite(c("EDAseq", "DESeq2"))
+
+# Annotation
+biocLite(c("AnnotationDbi", "org.Hs.eg.db"))
+
+# Visualization
+install.packages(c("pheatmap", "RColorBrewer", "gplots"))
+
+```
+
+## File Preparation
+
+**Count data file**
+ 
+ - Data input should be raw counts of sequencing reads/fragment 
+ - If necessary, combine count data from multiple sample files
+ - Ensure column names are correct
+ - Row names should be the gene name/ID
+ - Optional: filter for minimum read counts
+
+**Metafile for the samples in the count file**
+
+- Sample name
+- Cell type
+- Treatment/condition
+- Time point
+- Anything: read number, library barcode, data run, ...
+
+
+## Data input to DESeq2 should be **raw counts**
+
+"The values in the matrix should be raw counts of sequencing reads/fragments. 
+This is important for DESeq2’s statistical model to hold, as only counts allow 
+assessing the measurement precision correctly. It is important to never provide 
+counts that were pre-normalized for sequencing depth/library size, as the 
+statistical model is most powerful when applied to un-normalized counts, and is 
+designed to account for library size differences internally."
+
+<small>Love MI, Anders S, Kim V and Huber W. RNA-Seq workflow: gene-level 
+exploratory analysis and differential expression [version 2; referees: 2 approved]. 
+F1000Research 2016, 4:1070 (doi: 10.12688/f1000research.7035.2)</small>
+
+When using DESeq2 spike-in data, you provide the raw counts and the calculated 
+spike-in value. For example, using RUVseq with the ERCC spike-in, you include the 
+factor of unwanted variation (e.g. W_1) with the raw count data.
+
+## Count files generated by STAR
+
+The count file I have provided was generated from the STAR alignment results on
+the Griffith data set.<br><br>
+
+The combined count files include:
+<br>
+<br>
+<code>
+HBR_1.starReadsPerGene.out.tab<br>
+HBR_2.starReadsPerGene.out.tab<br>
+HBR_3.starReadsPerGene.out.tab<br>
+UHR_1.starReadsPerGene.out.tab<br>
+UHR_2.starReadsPerGene.out.tab<br>
+UHR_3.starReadsPerGene.out.tab
+</code>
+
+
+## Getting the data
+
+```{r echo = TRUE}
+# Change the directory path that contains the GitHub files
+dir <- "/Users/stacey/Data/GitHub/Introduction-to-DESeq2"
+
+setwd(dir)
+data<- read.table("count_file_complete.txt", 
+                  row.names = 1, 
+                  header = TRUE)
+head(data)
+tail(data)
+```
+## Removing spike-ins
+
+The Griffith dataset includes the ERCC spike-in using Spike Mix 1 for one set of
+samples and Spike Mix 2 for the second set. The samples can be normalized using
+the two spike-in method with the package [ERCC Dashboard](https://www.bioconductor.org/packages/release/bioc/html/erccdashboard.html) available on Bioconductor.
+
+Using the two spike-in method means that the values of the spike-ins will be
+different between the two groups and many will be identified as significant. I 
+am just going to remove the spike-ins for our plotting purposes.
+
+```{r echo = TRUE, eval = TRUE, message = FALSE, warning = FALSE}
+library(dplyr)
+library(tibble)
+tail(data)
+
+ercc_n <- length(which(grepl("ERCC", rownames(data))))
+nrow(data)
+
+data <- data %>% 
+  rownames_to_column("gene") %>%
+  filter(!grepl("ERCC", rownames(data))) %>%
+  column_to_rownames("gene")
+
+nrow(data)
+nrow(data) + ercc_n
+
+tail(data)
+```
+
+## Filter the data
+
+There are a lot of samples with zero reads and oftentimes this can be problematic. 
+To avoid any issues during the analysis I am going to filter the data so that each
+sample has at least one read for each gene. 
+
+```{r echo = TRUE}
+min_reads <- 1
+min_samples <- 6
+
+read_filter <- apply(data,
+                     1,
+                     function(samples) {
+                       length(which(samples >= min_reads)) >= min_samples
+                       })
+filtered_data <- data[read_filter, ]
+head(filtered_data)
+
+```
+
+## Filtered Data
+
+Here are the results of the number of genes in the dataset before and after filtering.
+
+```{r echo = TRUE}
+# How many genes are in the unfiltered data file?
+nrow(data)
+
+# How many genes are in the filtered data file?
+nrow(filtered_data)
+
+# How many genes were removed?
+nrow(data) - nrow(filtered_data)
+```
+
+## Preparing Sample Metadata
+
+It is important to keep an information sheet about your samples. This will help
+you remember what is going on with each sample and it will make it easier to 
+assign different conditions and groups for exploratory data analysis.
+
+```{r echo = TRUE}
+sample_list <- data.frame(row.names = colnames(filtered_data),
+                          sample_name = colnames(filtered_data),
+                          cell_type = rep(c("HBR", "UHR"), each = 3))
+sample_list
+# write.csv(sample_list, file = "sample_list.csv")
+```
+
+## Quality Assessment
+
+It is important to check our data for anything that may look suspicious and 
+concerning. Using the package [EDASeq](http://bioconductor.org/packages/release/bioc/html/EDASeq.html), 
+we can make a few plots to see what our data looks like. **Step 1** is to put 
+our data into an ExpressionSet.
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+library("EDASeq")
+
+set <- newSeqExpressionSet(as.matrix(filtered_data),
+                           phenoData = sample_list)
+set
+```
+
+## Quality Assessment: RLE
+
+Relative log expression (RLE) plots allow for the visualization of unwanted 
+variation in large data sets. Read more about RLE plots in [RLE plots: Visualizing 
+unwanted variation in high dimensional data](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0191629).
+
+```{r echo = TRUE, out.width = "600px", fig.align = "center"}
+library("RColorBrewer")
+
+colors <- brewer.pal(3, "Set1")
+
+plotRLE(set, 
+        outline = FALSE, 
+        ylim = c(-3, 3), 
+        col = colors[sample_list$cell_type])
+```
+
+## Quality Assessment: PCA
+
+A PCA plot is used to emphasize variation between populations and visualize 
+strong patterns in a dataset.
+
+```{r echo = TRUE, out.width = "700px", fig.align = "center"}
+plotPCA(set,
+        ylim = c(-1, 1),
+        xlim = c(-1, 1),
+        col = colors[sample_list$cell_type], 
+        cex = 1.3)
+```
+
+## Count Matrix Input
+
+From [Analyzing RNA-seq data with DESeq2, 5/04/18](http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#input-data)
+
+Similar to the ExpressionSet described earlier, DESeq2 has its own data container 
+called a **DESeqDataSet**. There are several inputs that can be converted into 
+this type of object, see the link above for more options. Here we are using our
+<code>filtered_data</code> matrix as input.
+
+```{r echo = TRUE, message = FALSE}
+library("DESeq2")
+
+ddsM <- DESeqDataSetFromMatrix(countData = filtered_data,
+                               colData = sample_list,
+                               design = ~ cell_type)
+ddsM
+```
+
+Alternatively, we can access the counts matrix from the ExpressionSet generated 
+earlier and use it as an input to DESeqDataSet. 
+```{r echo = TRUE, eval = FALSE}
+ddsFromSet <- DESeqDataSetFromMatrix(countData = counts(set),
+                                      colData = sample_list,
+                                      design = ~ cell_type)
+```
+
+## Setting Factor levels
+
+The sample set to be used as a reference or the levels you want a multi-factor
+experiment to be assigned need to be explicitly set. DESeq2 does not know what
+you want to use as your control but it will make a default decision and do it 
+alphabetically. The data set we are using is comparing two different cell lines. 
+I will set the cell line **HBR** as the reference, this will be like an 
+"untreated" sample.<br><br>
+
+You can assign the reference using <code>relevel</code> or assign the levels
+using <code>factor</code>.
+
+```{r echo = TRUE}
+# Explicitly set the factors levels using "factor"
+# ddsM$cell_type <- factor(ddsM$cell_type, levels = c("HBR, "UHR"))
+
+# Set the reference using "relevel"
+ddsM$cell_type <- relevel(ddsM$cell_type, ref = "HBR")
+```
+
+## Differential Expression Analysis
+
+Perform the differential analysis with the function <code>DESeq</code>.
+
+Generate results tables using the function <code>results</code>.
+
+```{r echo = TRUE, message = FALSE}
+dds <- DESeq(ddsM)
+res <- results(dds)
+head(res)
+```
+
+## Dissecting the Results 
+
+```{r echo = TRUE, eval = TRUE}
+res_info <- data.frame(column_name = colnames(res),
+                       description = mcols(res)$description)
+res_info
+
+counts(dds, normalized = TRUE)[1, 1:6]
+mean(counts(dds, normalized = TRUE)[1, 1:6])
+res$baseMean[1]
+```
+
+## A closer look at the results
+
+```{r echo = TRUE}
+summary(res)
+```
+
+## Accessing the Data
+
+```{r echo = TRUE, eval = FALSE}
+# Count Data
+assay(dds)
+assays(dds)[["counts"]]
+
+# Metadata
+colData(dds)
+
+# Specific metadata column
+dds$cell_type
+
+# Information about variables and tests used
+mcols(res)$description
+
+# Specific column in the result set
+res$padj
+res[, c("log2FoldChange", "padj")]
+```
+
+## Ordered pvalues
+
+```{r echo = TRUE}
+resOrdered <- res[order(res$padj), ]
+head(resOrdered)
+
+```
+
+## pvalues continued
+
+```{r echo = TRUE}
+counts(dds)[rownames(counts(dds)) == "ENSG00000100321.14", ]
+counts(dds, normalized = TRUE)[rownames(counts(dds)) == "ENSG00000100321.14", ]
+mean(counts(dds, normalized = TRUE)[rownames(counts(dds)) == "ENSG00000100321.14", ])
+```
+
+## pvalues continued
+
+```{r echo = TRUE}
+sum(res$padj < 0.1, na.rm = TRUE)
+sum(res$padj < 0.5, na.rm = TRUE)
+```
+
+## Visualizing the Data
+
+
+## pvalue distribution
+
+Here is a quick blog post about [interpreting this type of graph](http://varianceexplained.org/statistics/interpreting-pvalue-histogram/).
+
+```{r echo = TRUE, fig.width = 6, fig.height = 5, fig.align = "center"}
+hist(res$pvalue,
+     col = "cyan4")
+```
+
+## Distances
+
+A heatmap of the sample distances allows us to visualize the  similarities and 
+dissimilarities between samples.
+
+```{r echo = TRUE, message = FALSE}
+sampleDists <- dist(t(assay(dds)))
+sampleDists
+
+sampleDistMatrix <- as.matrix(sampleDists)
+sampleDistMatrix
+```
+
+## Visualizing Distances
+
+```{r echo = TRUE, fig.width = 5.5, fig.height = 4.5, fig.align = "center"}
+library("pheatmap")
+library("RColorBrewer")
+
+colors <- colorRampPalette(rev(brewer.pal(9, "Oranges")))(200)
+
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+## Outliers
+
+```{r echo = TRUE, fig.width = 6, fig.height = 5, fig.align = TRUE}
+summary(res)
+boxplot(log10(assays(dds)[["cooks"]]), range = 0)
+```
+
+## Annotation
+
+```{r echo = TRUE, warnings = FALSE, messages = FALSE, eval = TRUE }
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+columns(org.Hs.eg.db)
+
+# The current gene IDs have an isoform value at the end which is a provlem for 
+# mapping annotations. I am using gsub to remove the isoform values that
+# follow a "." from the end of each gene ID.
+rownames(res) <- gsub("\\..*", "", row.names(res))
+
+res$symbol <- mapIds(org.Hs.eg.db,
+                     keys = row.names(res), 
+                     column = "SYMBOL",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+res$entrez <- mapIds(org.Hs.eg.db,
+                     keys = row.names(res), 
+                     column = "ENTREZID",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+res$name <- mapIds(org.Hs.eg.db,
+                     keys = row.names(res), 
+                     column = "GENENAME",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+head(res)
+```
+
+## Count table
+
+```{r echo = TRUE, warning = FALSE, message = FALSE, out.width = "700px"}
+library('RColorBrewer')
+library('gplots')
+
+color <- colorRampPalette(brewer.pal(9, 'GnBu'))(100)
+select <- order(rowMeans(counts(dds, normalized=TRUE)), decreasing = TRUE)[1:15]
+heatmap_genes <- counts(dds, normalized=TRUE)[select,]
+
+rownames(heatmap_genes) <- gsub("\\..*", "", row.names(heatmap_genes))
+rownames(heatmap_genes) <- mapIds(org.Hs.eg.db,
+                                  keys = row.names(heatmap_genes), 
+                                  column = "SYMBOL",
+                                  keytype = "ENSEMBL",
+                                  multiVals = "first")
+heatmap.2(heatmap_genes, 
+          col = color,
+          Rowv = TRUE, 
+          Colv = FALSE, 
+          scale ='none',
+          dendrogram = 'row', 
+          trace = 'none', 
+          margin = c(10, 6))
+```
+
+## Count table: variance stabilization transformation
+
+```{r echo = TRUE, eval = TRUE, message = FALSE, warning = FALSE, out.width = "700px"}
+color <- colorRampPalette(brewer.pal(9, 'GnBu'))(100)
+select <- order(rowMeans(counts(dds, normalized=TRUE)), decreasing = TRUE)[1:15]
+
+vsd <- varianceStabilizingTransformation(dds, blind = TRUE, fitType = "local")
+heatmap_vsd <- assay(vsd)[select,]
+rownames(heatmap_vsd) <- gsub("\\..*", "", row.names(heatmap_vsd))
+rownames(heatmap_vsd) <- mapIds(org.Hs.eg.db,
+                                  keys = row.names(heatmap_vsd), 
+                                  column = "SYMBOL",
+                                  keytype = "ENSEMBL",
+                                  multiVals = "first")
+heatmap.2(heatmap_vsd, 
+          col = color,
+          Rowv = TRUE, 
+          Colv = FALSE, 
+          scale ='none',
+          dendrogram ='row', 
+          trace = 'none', 
+          margin=c(10, 6))
+```
+
+## Log fold change distribution
+
+```{r echo = TRUE, fig.align = "center"}
+plotMA(res, ylim = c(-3, 3))
+```
